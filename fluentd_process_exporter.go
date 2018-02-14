@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -44,7 +43,7 @@ func NewExporter() (*Exporter, error) {
 		return nil, err
 	}
 
-	labelNames := []string{"conf_name", "worker_id", "pid"}
+	labelNames := []string{"id", "group"}
 	return &Exporter{
 		fs: fs,
 		scrapeFailures: prometheus.NewCounter(prometheus.CounterOpts{
@@ -105,7 +104,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
-	log.Infof("fluentd ids = %v", ids)
+	log.Debugf("fluentd ids = %v", ids)
 
 	ws := 0
 	for groupKey, pidList := range ids {
@@ -117,10 +116,10 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 				continue
 			}
 
-			labels := []string{groupKey, strconv.Itoa(i), strconv.Itoa(pid)}
-			e.cpuTime.WithLabelValues(labels...).Set(ps.CPUTime())
-			e.virtualMemory.WithLabelValues(labels...).Set(float64(ps.VirtualMemory()))
-			e.residentMemory.WithLabelValues(labels...).Set(float64(ps.ResidentMemory()))
+			l := []string{fmt.Sprintf("%s_%d", groupKey, i), groupKey}
+			e.cpuTime.WithLabelValues(l...).Set(ps.CPUTime())
+			e.virtualMemory.WithLabelValues(l...).Set(float64(ps.VirtualMemory()))
+			e.residentMemory.WithLabelValues(l...).Set(float64(ps.ResidentMemory()))
 
 			ws++
 		}
@@ -143,40 +142,47 @@ func (e *Exporter) resolveFluentdIds() (map[string][]int, error) {
 	}
 
 	for _, p := range procs {
-		cla, err := p.CmdLine()
-		if err != nil {
-			log.Info(err)
-			continue
-		}
-		cl := strings.Join(cla, " ")
-		if !processNameRegex.MatchString(cl) {
-			continue
-		}
-
-		st, err := p.NewStat()
-		if err != nil {
-			log.Info(err)
-			continue
-		}
-
-		// PPID=1 is a supervisor.
-		if st.PPID == 1 {
-			log.Infof("PPID %d = %s", st.PPID, cl)
+		cl := e.filterProc(p)
+		if cl == "" {
 			continue
 		}
 
 		groupsKey := configFileNameRegex.FindStringSubmatch(cl)
-		log.Infof("groupsKey = %v", groupsKey)
+		log.Debugf("groupsKey = %v", groupsKey)
 
 		key := "default"
 		if len(groupsKey) > 0 {
 			key = strings.Trim(groupsKey[2], " ")
 		}
 
-		log.Infof("Group = %s, %d", key, st.PID)
-		ids[key] = append(ids[key], st.PID)
+		ids[key] = append(ids[key], p.PID)
 	}
 	return ids, nil
+}
+
+func (e *Exporter) filterProc(proc procfs.Proc) string {
+	cla, err := proc.CmdLine()
+	if err != nil {
+		log.Info(err)
+		return ""
+	}
+	cl := strings.Join(cla, " ")
+	if !processNameRegex.MatchString(cl) {
+		return ""
+	}
+
+	st, err := proc.NewStat()
+	if err != nil {
+		log.Info(err)
+		return ""
+	}
+
+	// PPID=1 is a supervisor.
+	if st.PPID == 1 {
+		log.Infof("PPID %d = %s", st.PPID, cl)
+		return ""
+	}
+	return cl
 }
 
 func (e *Exporter) procStat(groupKey string, pid int) (procfs.ProcStat, error) {
