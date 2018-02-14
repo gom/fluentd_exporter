@@ -1,2 +1,3 @@
-# fluentd_exporter
-Prometheus exporter for fluentd
+# fluentd_process_exporter
+
+Prometheus exporter for fluentd processs

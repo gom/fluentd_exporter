@@ -18,12 +18,8 @@ import (
 )
 
 var (
-	listenAddress = flag.String("web.listen-address", ":9224", "Address on which to expose metrics and web interface.")
-	metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
-	showVersion   = flag.Bool("version", false, "Print version information.")
-
-	processNameRegex    = regexp.MustCompile(`/fluentd\s*`)
-	configFileNameRegex = regexp.MustCompile(`\s(-c|--config)\s.*/(.+)\.conf\s*`)
+	processNameRegex    = regexp.MustCompile(`.*/fluentd\s`)
+	configFileNameRegex = regexp.MustCompile(`\s(-c|--config)\s+.*?([^/]+)\.conf\s*`)
 )
 
 const (
@@ -48,7 +44,7 @@ func NewExporter() (*Exporter, error) {
 		return nil, err
 	}
 
-	labelNames := []string{"conf_name", "worker_number", "pid"}
+	labelNames := []string{"conf_name", "worker_id", "pid"}
 	return &Exporter{
 		fs: fs,
 		scrapeFailures: prometheus.NewCounter(prometheus.CounterOpts{
@@ -109,12 +105,12 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
-	log.Debugf("fluentd ids = %v", ids)
+	log.Infof("fluentd ids = %v", ids)
 
-	workers := 0
+	ws := 0
 	for groupKey, pidList := range ids {
 		for i, pid := range pidList {
-			procStat, err := e.procStat(groupKey, pid)
+			ps, err := e.procStat(groupKey, pid)
 			if err != nil {
 				e.scrapeFailures.Inc()
 				e.scrapeFailures.Collect(ch)
@@ -122,15 +118,15 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 			}
 
 			labels := []string{groupKey, strconv.Itoa(i), strconv.Itoa(pid)}
-			e.cpuTime.WithLabelValues(labels...).Set(procStat.CPUTime())
-			e.virtualMemory.WithLabelValues(labels...).Set(float64(procStat.VirtualMemory()))
-			e.residentMemory.WithLabelValues(labels...).Set(float64(procStat.ResidentMemory()))
+			e.cpuTime.WithLabelValues(labels...).Set(ps.CPUTime())
+			e.virtualMemory.WithLabelValues(labels...).Set(float64(ps.VirtualMemory()))
+			e.residentMemory.WithLabelValues(labels...).Set(float64(ps.ResidentMemory()))
 
-			workers++
+			ws++
 		}
 	}
 
-	e.fluentdUp.Set(float64(workers))
+	e.fluentdUp.Set(float64(ws))
 
 	e.cpuTime.Collect(ch)
 	e.virtualMemory.Collect(ch)
@@ -140,63 +136,75 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 
 func (e *Exporter) resolveFluentdIds() (map[string][]int, error) {
 	ids := make(map[string][]int)
-	// map[config_filename] = list of pid (workers or processes)
+
 	procs, err := e.fs.AllProcs()
 	if err != nil {
 		return nil, err
 	}
-	for _, proc := range procs {
-		stat, err := proc.NewStat()
+
+	for _, p := range procs {
+		cla, err := p.CmdLine()
 		if err != nil {
 			log.Info(err)
 			continue
 		}
-		if !processNameRegex.MatchString(stat.Comm) {
-			continue
-		}
-		log.Debugf("Filterd %d = %s", stat.Comm, stat.PID)
-
-		// PPID=1 is supervisor.
-		if stat.PPID == 1 {
+		cl := strings.Join(cla, " ")
+		if !processNameRegex.MatchString(cl) {
 			continue
 		}
 
-		groupsKey := configFileNameRegex.FindStringSubmatch(stat.Comm)
-		var key string
-		if len(groupsKey) == 0 {
-			key = "default"
-		} else {
+		st, err := p.NewStat()
+		if err != nil {
+			log.Info(err)
+			continue
+		}
+
+		// PPID=1 is a supervisor.
+		if st.PPID == 1 {
+			log.Infof("PPID %d = %s", st.PPID, cl)
+			continue
+		}
+
+		groupsKey := configFileNameRegex.FindStringSubmatch(cl)
+		log.Infof("groupsKey = %v", groupsKey)
+
+		key := "default"
+		if len(groupsKey) > 0 {
 			key = strings.Trim(groupsKey[2], " ")
 		}
 
-		log.Debugf("Group = %s, %d", key, stat.PID)
-		if _, exists := ids[key]; !exists {
-			ids[key] = append(ids[key], stat.PID)
-		}
+		log.Infof("Group = %s, %d", key, st.PID)
+		ids[key] = append(ids[key], st.PID)
 	}
 	return ids, nil
 }
 
 func (e *Exporter) procStat(groupKey string, pid int) (procfs.ProcStat, error) {
-	proc, err := e.fs.NewProc(pid)
+	p, err := e.fs.NewProc(pid)
 	if err != nil {
 		log.Error(err)
 		return procfs.ProcStat{}, err
 	}
 
-	procStat, err := proc.NewStat()
+	ps, err := p.NewStat()
 	if err != nil {
 		log.Error(err)
 		return procfs.ProcStat{}, err
 	}
-	return procStat, nil
+	return ps, nil
 }
 
 func main() {
+	var (
+		Name          = "flunetd_process_exporter"
+		listenAddress = flag.String("web.listen-address", ":9224", "Address on which to expose metrics and web interface.")
+		metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
+		showVersion   = flag.Bool("version", false, "Print version information.")
+	)
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Fprintln(os.Stdout, version.Print("fluentd_exporter"))
+		fmt.Print(version.Print(Name))
 		os.Exit(0)
 	}
 
@@ -206,17 +214,17 @@ func main() {
 	}
 
 	prometheus.MustRegister(e)
-	prometheus.MustRegister(version.NewCollector("fluentd_exporter"))
+	prometheus.MustRegister(version.NewCollector(Name))
 
-	log.Infoln("Starting fluentd_exporter", version.Info())
+	log.Infoln("Starting ", Name, version.Info())
 	log.Infoln("Build context", version.BuildContext())
 
 	http.Handle(*metricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
-			<head><title>fluentd Exporter</title></head>
+			<head><title>Fluentd Process Exporter</title></head>
 			<body>
-			<h1>fluentd Exporter v` + version.Info() + `</h1>
+			<h1>Fluentd Process Exporter: ` + version.Info() + `</h1>
 			<p><a href="` + *metricsPath + `">Metrics</a></p>
 			</body>
 		</html>`))
