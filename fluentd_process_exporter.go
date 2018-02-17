@@ -25,6 +25,7 @@ const (
 	namespace = "fluentd"
 )
 
+// Exporter collects stats from the fluentd processes and exports them.
 type Exporter struct {
 	mutex sync.RWMutex
 
@@ -37,6 +38,7 @@ type Exporter struct {
 	fluentdUp      prometheus.Gauge
 }
 
+// NewExporter returns an initialized Exporter.
 func NewExporter() (*Exporter, error) {
 	fs, err := procfs.NewFS(procfs.DefaultMountPoint)
 	if err != nil {
@@ -80,6 +82,7 @@ func NewExporter() (*Exporter, error) {
 	}, nil
 }
 
+// Describe describes all the metrics. It implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.scrapeFailures.Describe(ch)
 	e.cpuTime.Describe(ch)
@@ -88,6 +91,8 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.fluentdUp.Describe(ch)
 }
 
+// Collect fetches the stats from fluentd processes.
+// It implements prometheus.Collector.
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()

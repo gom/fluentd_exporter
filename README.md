@@ -1,5 +1,7 @@
 # fluentd_process_exporter
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/gom/fluentd_process_exporter)](https://goreportcard.com/report/github.com/gom/fluentd_process_exporter)
+
 Prometheus exporter for process metrics about fluentd.
 
 ## Build and Run
