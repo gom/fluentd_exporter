@@ -22,7 +22,7 @@ var (
 )
 
 const (
-	namespace = "fluentd"
+	namespace = "fluentd_process"
 )
 
 // Exporter collects stats from the fluentd processes and exports them.

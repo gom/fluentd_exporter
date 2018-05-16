@@ -15,10 +15,10 @@ $ ./fluentd_process_exporter
 
 Name | Type
 ------|------
-fluentd_cpu_time | gauge 
-fluentd_resident_memory_usage | gauge
-fluentd_virtual_memory_usage | gauge
-fluentd_up | gauge
+fluentd_process_cpu_time | gauge 
+fluentd_process_resident_memory_usage | gauge
+fluentd_process_virtual_memory_usage | gauge
+fluentd_process_up | gauge
 
 ## Options
 Name |Description | Default
@@ -72,3 +72,7 @@ fluentd_virtual_memory_usage{group="other_fluent",id="other_fluent_0"} 5.8986086
 $ make docker
 $ docker run --net=host --pid=host fluentd_process_exporter:master
 ```
+
+## Similar exporters
+- https://github.com/wyukawa/fluentd_exporter
+- https://github.com/matsumana/td-agent_exporter
